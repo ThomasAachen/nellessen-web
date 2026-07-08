@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-nellessen.de — SFTP Deploy Script
-Läuft in GitHub Actions, uploaded Dateien direkt auf IONOS
-"""
 import os, sys, time, paramiko
 
 HOST   = os.environ["SFTP_HOST"]
@@ -15,6 +11,7 @@ FILES = [
     "index.html",
     "send.php",
     "robots.txt",
+    "cleanup.php",
 ]
 
 def connect(retries=3):
@@ -27,34 +24,26 @@ def connect(retries=3):
             print(f"✅ Verbunden mit {HOST} (Versuch {attempt})")
             return client, sftp
         except Exception as e:
-            print(f"⚠️  Versuch {attempt} fehlgeschlagen: {e}")
+            print(f"⚠️  Versuch {attempt}: {e}")
             if attempt < retries:
                 time.sleep(5)
-    print("❌ Verbindung fehlgeschlagen nach 3 Versuchen")
     sys.exit(1)
 
 client, sftp = connect()
-
 errors = []
 for filename in FILES:
     local = os.path.join(os.path.dirname(__file__), "..", filename)
     remote = REMOTE.rstrip("/") + "/" + filename
     if not os.path.exists(local):
-        print(f"⏭️  SKIP  {filename} (nicht vorhanden)")
+        print(f"⏭️  SKIP {filename}")
         continue
     try:
         sftp.put(local, remote)
-        size = os.path.getsize(local)
-        print(f"✅ OK    {filename}  ({size:,} Bytes) → {remote}")
+        print(f"✅ OK   {filename} → {remote}")
     except Exception as e:
-        print(f"❌ FAIL  {filename}: {e}")
+        print(f"❌ FAIL {filename}: {e}")
         errors.append(filename)
 
 sftp.close()
 client.close()
-
-if errors:
-    print(f"\n❌ Fehler bei: {', '.join(errors)}")
-    sys.exit(1)
-else:
-    print(f"\n✅ Deploy abgeschlossen — {len(FILES)} Datei(en) übertragen")
+sys.exit(1 if errors else 0)
