@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /glowinthedark/
+
+Sitemap: https://www.nellessen.de/sitemap.xml
