@@ -8,12 +8,28 @@ PASS   = os.environ["SFTP_PASSWORD"]
 REMOTE = os.environ.get("SFTP_TARGET", "/dsc06424530/")
 
 FILES = [
-    ("index.html",                "index.html"),
-    ("send.php",                  "send.php"),
-    ("robots.txt",                "robots.txt"),
-    ("phpmailer/Exception.php",   "phpmailer/Exception.php"),
-    ("phpmailer/PHPMailer.php",   "phpmailer/PHPMailer.php"),
-    ("phpmailer/SMTP.php",        "phpmailer/SMTP.php"),
+    # Public
+    ("index.php",                         "index.php"),
+    ("send.php",                          "send.php"),
+    ("robots.txt",                        "robots.txt"),
+    # PHPMailer
+    ("phpmailer/Exception.php",           "phpmailer/Exception.php"),
+    ("phpmailer/PHPMailer.php",           "phpmailer/PHPMailer.php"),
+    ("phpmailer/SMTP.php",                "phpmailer/SMTP.php"),
+    # Includes
+    ("includes/common.php",               "includes/common.php"),
+    ("includes/style.php",                "includes/style.php"),
+    # Familie
+    ("familie/auth.php",                  "familie/auth.php"),
+    ("familie/login.php",                 "familie/login.php"),
+    ("familie/logout.php",                "familie/logout.php"),
+    ("familie/index.php",                 "familie/index.php"),
+    ("familie/admin.php",                 "familie/admin.php"),
+    ("familie/fotos.php",                 "familie/fotos.php"),
+    ("familie/kalender.php",              "familie/kalender.php"),
+    ("familie/rezepte.php",               "familie/rezepte.php"),
+    ("familie/erinnerungen.php",          "familie/erinnerungen.php"),
+    ("familie/data/.htaccess",            "familie/data/.htaccess"),
 ]
 
 def connect(retries=3):
@@ -22,43 +38,37 @@ def connect(retries=3):
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(HOST, port=PORT, username=USER, password=PASS, timeout=20)
-            sftp = client.open_sftp()
-            print(f"✅ Verbunden (Versuch {attempt})")
-            return client, sftp
+            print(f"✅ Connected (attempt {attempt})")
+            return client, client.open_sftp()
         except Exception as e:
-            print(f"⚠️  Versuch {attempt}: {e}")
-            if attempt < retries:
-                time.sleep(5)
+            print(f"⚠️  Attempt {attempt}: {e}")
+            if attempt < retries: time.sleep(5)
     sys.exit(1)
 
-def ensure_dir(sftp, remote_dir):
-    try:
-        sftp.stat(remote_dir)
+def ensure_dir(sftp, path):
+    try: sftp.stat(path)
     except FileNotFoundError:
-        sftp.mkdir(remote_dir)
-        print(f"📁 Erstellt: {remote_dir}")
+        sftp.mkdir(path); print(f"📁 {path}")
 
 client, sftp = connect()
-remote_base = REMOTE.rstrip("/")
+base = REMOTE.rstrip("/")
 
-# Ensure phpmailer/ subdir exists
-ensure_dir(sftp, f"{remote_base}/phpmailer")
+# Ensure dirs
+for d in ["phpmailer", "includes", "familie", "familie/data"]:
+    ensure_dir(sftp, f"{base}/{d}")
 
 errors = []
 for local_rel, remote_rel in FILES:
     local  = os.path.join(os.path.dirname(__file__), "..", local_rel)
-    remote = f"{remote_base}/{remote_rel}"
+    remote = f"{base}/{remote_rel}"
     if not os.path.exists(local):
-        print(f"⏭️  SKIP {local_rel}")
-        continue
+        print(f"⏭️  SKIP {local_rel}"); continue
     try:
         sftp.put(local, remote)
-        size = os.path.getsize(local)
-        print(f"✅ {local_rel} ({size:,} B)")
+        print(f"✅ {local_rel} ({os.path.getsize(local):,}B)")
     except Exception as e:
-        print(f"❌ {local_rel}: {e}")
-        errors.append(local_rel)
+        print(f"❌ {local_rel}: {e}"); errors.append(local_rel)
 
-sftp.close()
-client.close()
+sftp.close(); client.close()
+print(f"\n{'✅ Done' if not errors else '❌ Errors: ' + str(errors)}")
 sys.exit(1 if errors else 0)
