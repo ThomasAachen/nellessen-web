@@ -1,81 +1,73 @@
 <?php
-require __DIR__ . '/auth.php';
-require __DIR__ . '/../includes/common.php';
+require_once __DIR__ . '/layout.php';
 $user = require_login();
-page_head('Familie · Nellessen');
-site_nav('familie');
+$today = today_ymd();
+$upcoming = array_slice(array_values(array_filter(family_dates($today, date('Y-m-d', strtotime($today . ' +60 days'))), function ($d) { return $d['kind'] !== 'memorial'; })), 0, 6);
+$latestPhotos = rows('SELECT id, file, user_id FROM photos ORDER BY id DESC LIMIT 12');
+$posts = rows('SELECT p.*, (SELECT COUNT(*) FROM reactions r WHERE r.target_type=\'post\' AND r.target_id=p.id) hearts,
+               (SELECT COUNT(*) FROM reactions r WHERE r.target_type=\'post\' AND r.target_id=p.id AND r.user_id=?) mine
+               FROM posts p ORDER BY p.pinned DESC, p.id DESC LIMIT 15', array($user['id']));
+$memories = rows('SELECT id, title, user_id, year FROM memories ORDER BY id DESC LIMIT 5');
+$recipes = rows('SELECT id, title, user_id FROM recipes ORDER BY id DESC LIMIT 5');
+$n = array(
+    array('fotos.php', (int)val('SELECT COUNT(*) FROM photos'), 'Fotos'),
+    array('rezepte.php', (int)val('SELECT COUNT(*) FROM recipes'), 'Rezepte'),
+    array('erinnerungen.php', (int)val('SELECT COUNT(*) FROM memories'), 'Erinnerungen'),
+    array('stammbaum.php', (int)val('SELECT COUNT(*) FROM persons'), 'Personen im Stammbaum'),
+);
+$canPin = has_role($user, 'editor');
+
+fam_start('Übersicht', 'index', $user);
+$hour = (int)date('G');
+$greet = $hour < 11 ? 'Guten Morgen' : ($hour < 18 ? 'Hallo' : 'Guten Abend');
+fam_heading('Familienbereich', h($greet) . ', <em>' . h(explode(' ', $user['name'])[0]) . '</em>');
 ?>
-
-<div style="min-height:100svh;padding:6rem 2.5rem 4rem">
-<div class="container">
-
-  <!-- Header -->
-  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1.5rem;margin-bottom:3rem">
-    <div>
-      <p class="eyebrow">Familien-Bereich</p>
-      <h1 style="font-size:clamp(2rem,5vw,3.5rem);font-weight:700;letter-spacing:-.025em;color:#fff;line-height:1">
-        Hallo, <span style="color:var(--lime)"><?= h($user['name']) ?>.</span>
-      </h1>
-    </div>
-    <div style="display:flex;align-items:center;gap:1rem">
-      <?php if($user['role']==='admin'): ?>
-      <a href="admin.php" class="btn btn-outline" style="font-size:.68rem">⚙ Admin</a>
-      <?php endif ?>
-      <a href="logout.php" class="btn btn-outline" style="font-size:.68rem">Abmelden</a>
-    </div>
-  </div>
-
-  <!-- Sub Nav -->
-  <nav class="fam-nav">
-    <a href="index.php" class="active">Übersicht</a>
-    <a href="fotos.php">📷 Fotos</a>
-    <a href="kalender.php">🎂 Geburtstage</a>
-    <a href="rezepte.php">🍽️ Rezepte</a>
-    <a href="erinnerungen.php">📖 Erinnerungen</a>
-  </nav>
-
-  <!-- Cards -->
-  <div class="card-grid">
-    <a href="fotos.php" style="text-decoration:none">
-      <div class="card">
-        <div class="card-icon">📷</div>
-        <div class="card-title">Fotos</div>
-        <div class="card-desc">Familienfotos, Ausflüge, besondere Momente — das gemeinsame Bildarchiv der Familie.</div>
-        <div class="card-meta" style="margin-top:1.5rem">Platzhalter · Bald verfügbar</div>
-      </div>
-    </a>
-    <a href="kalender.php" style="text-decoration:none">
-      <div class="card">
-        <div class="card-icon">🎂</div>
-        <div class="card-title">Geburtstage</div>
-        <div class="card-desc">Damit niemand vergessen wird — alle Geburtstage der Familie auf einen Blick.</div>
-        <div class="card-meta" style="margin-top:1.5rem">Platzhalter · Bald verfügbar</div>
-      </div>
-    </a>
-    <a href="rezepte.php" style="text-decoration:none">
-      <div class="card">
-        <div class="card-icon">🍽️</div>
-        <div class="card-title">Rezepte</div>
-        <div class="card-desc">Die Lieblingsrezepte der Familie — von Omas Weckmännern bis zum Weihnachtsstollen.</div>
-        <div class="card-meta" style="margin-top:1.5rem">Platzhalter · Bald verfügbar</div>
-      </div>
-    </a>
-    <a href="erinnerungen.php" style="text-decoration:none">
-      <div class="card">
-        <div class="card-icon">📖</div>
-        <div class="card-title">Erinnerungen</div>
-        <div class="card-desc">Geschichten, Anekdoten und Momente, die erhalten bleiben sollen — für uns und die Nächsten.</div>
-        <div class="card-meta" style="margin-top:1.5rem">Platzhalter · Bald verfügbar</div>
-      </div>
-    </a>
-  </div>
-
-  <!-- Info Box -->
-  <div class="alert alert-info" style="margin-top:2rem">
-    ℹ️ &nbsp;Dieser Bereich wird gerade aufgebaut. Inhalte folgen schrittweise. Bei Fragen oder Wünschen: direkt an Thomas.
-  </div>
-
-</div>
+<div class="stat-row">
+  <?php foreach ($n as $s): ?><a class="stat" href="<?= $s[0] ?>"><div class="n"><?= $s[1] ?></div><div class="l"><?= h($s[2]) ?></div></a><?php endforeach ?>
 </div>
 
-<?php site_footer(); ?>
+<div class="grid-main">
+  <div>
+    <div class="panel">
+      <h2>Pinnwand</h2>
+      <form data-api="post_add" class="comment-form" style="margin:0 0 1rem">
+        <textarea name="body" rows="2" maxlength="2000" required placeholder="Was gibt es Neues? Ein Gruß, eine Frage, eine Einladung …"></textarea>
+        <button class="btn btn-lime btn-sm" type="submit">Posten</button>
+      </form>
+      <?php if (!$posts): ?><div class="empty">Noch nichts an der Pinnwand. Schreib den ersten Gruß.</div><?php endif ?>
+      <?php foreach ($posts as $p): ?>
+      <div class="post<?= $p['pinned'] ? ' pinned' : '' ?>">
+        <div class="row" style="gap:.6rem"><?= avatar_html(user_name($p['user_id']), 30) ?>
+          <strong style="color:#fff;font-size:.85rem"><?= h(user_name($p['user_id'])) ?></strong>
+          <span class="muted small"><?= h(rel_time($p['created_at'])) ?></span><?= $p['pinned'] ? '<span class="tag">angeheftet</span>' : '' ?></div>
+        <div class="p-text"><?= rich_text($p['body']) ?></div>
+        <div class="row"><?= reaction_button('post', $p['id'], $p['hearts'], (int)$p['mine'] > 0) ?>
+          <?php if ($canPin): ?><button type="button" class="link-btn" data-api-click="post_pin" data-id="<?= (int)$p['id'] ?>"><?= $p['pinned'] ? 'lösen' : 'anheften' ?></button><?php endif ?>
+          <?php if (is_owner_or_admin($user, $p['user_id'])): ?><button type="button" class="link-btn" style="color:#f87171" data-api-click="post_delete" data-id="<?= (int)$p['id'] ?>" data-confirm="Beitrag löschen?">löschen</button><?php endif ?></div>
+      </div>
+      <?php endforeach ?>
+    </div>
+    <?php if ($latestPhotos): ?>
+    <div class="panel"><div class="row between"><h2 style="margin:0">Neue Fotos</h2><a href="fotos.php" class="link-btn">alle ansehen</a></div>
+      <div class="strip" style="margin-top:1rem"><?php foreach ($latestPhotos as $p): ?><a href="fotos.php?open=<?= (int)$p['id'] ?>"><img src="<?= h(img_url('photos', $p['file'], true)) ?>" alt="" loading="lazy"></a><?php endforeach ?></div></div>
+    <?php endif ?>
+  </div>
+  <div>
+    <div class="panel"><div class="row between"><h2 style="margin:0">Als Nächstes</h2><a href="termine.php" class="link-btn">Kalender</a></div>
+      <div class="mini-list" style="margin-top:.8rem">
+      <?php if (!$upcoming): ?><p class="muted small">In den nächsten 60 Tagen steht nichts an.</p><?php endif ?>
+      <?php foreach ($upcoming as $d): ?><a href="<?= h($d['link']) ?>"><span><?= h($d['title']) ?><br><span class="muted tiny"><?= h(de_date($d['date'])) ?></span></span><span class="lime tiny" style="white-space:nowrap"><?= h(when_text($d['date'])) ?></span></a><?php endforeach ?>
+      </div></div>
+    <div class="panel"><div class="row between"><h2 style="margin:0">Neue Geschichten</h2><a href="erinnerungen.php" class="link-btn">alle</a></div>
+      <div class="mini-list" style="margin-top:.8rem">
+      <?php if (!$memories): ?><p class="muted small">Noch keine Geschichten.</p><?php endif ?>
+      <?php foreach ($memories as $m): ?><a href="erinnerung.php?id=<?= (int)$m['id'] ?>"><span><?= h($m['title']) ?></span><span class="muted tiny"><?= h(user_name($m['user_id'])) ?></span></a><?php endforeach ?>
+      </div></div>
+    <div class="panel"><div class="row between"><h2 style="margin:0">Neue Rezepte</h2><a href="rezepte.php" class="link-btn">alle</a></div>
+      <div class="mini-list" style="margin-top:.8rem">
+      <?php if (!$recipes): ?><p class="muted small">Noch keine Rezepte.</p><?php endif ?>
+      <?php foreach ($recipes as $r): ?><a href="rezept.php?id=<?= (int)$r['id'] ?>"><span><?= h($r['title']) ?></span><span class="muted tiny"><?= h(user_name($r['user_id'])) ?></span></a><?php endforeach ?>
+      </div></div>
+  </div>
+</div>
+<?php fam_end();

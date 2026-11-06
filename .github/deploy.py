@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Lädt alle Projektdateien per SFTP auf den Webspace. Nutzerdaten (Datenbank, Uploads) werden nie angefasst."""
 import os, sys, time, paramiko
 
 HOST   = os.environ["SFTP_HOST"]
@@ -7,31 +8,30 @@ USER   = os.environ["SFTP_USER"]
 PASS   = os.environ["SFTP_PASSWORD"]
 REMOTE = os.environ.get("SFTP_TARGET", "/dsc06424530/")
 
-FILES = [
-    # Public
-    ("index.html",                        "index.html"),
-    ("index.php",                         "index.php"),
-    ("send.php",                          "send.php"),
-    ("robots.txt",                        "robots.txt"),
-    # PHPMailer
-    ("phpmailer/Exception.php",           "phpmailer/Exception.php"),
-    ("phpmailer/PHPMailer.php",           "phpmailer/PHPMailer.php"),
-    ("phpmailer/SMTP.php",                "phpmailer/SMTP.php"),
-    # Includes
-    ("includes/common.php",               "includes/common.php"),
-    ("includes/style.php",                "includes/style.php"),
-    # Familie
-    ("familie/auth.php",                  "familie/auth.php"),
-    ("familie/login.php",                 "familie/login.php"),
-    ("familie/logout.php",                "familie/logout.php"),
-    ("familie/index.php",                 "familie/index.php"),
-    ("familie/admin.php",                 "familie/admin.php"),
-    ("familie/fotos.php",                 "familie/fotos.php"),
-    ("familie/kalender.php",              "familie/kalender.php"),
-    ("familie/rezepte.php",               "familie/rezepte.php"),
-    ("familie/erinnerungen.php",          "familie/erinnerungen.php"),
-    ("familie/data/.htaccess",            "familie/data/.htaccess"),
-]
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+EXCLUDE_DIRS  = {".git", ".github", "node_modules", "__pycache__"}
+EXCLUDE_FILES = {"README.md", ".gitignore", ".DS_Store", "Thumbs.db"}
+ALLOWED_EXT   = {".php", ".html", ".css", ".js", ".txt", ".htaccess", ".json", ".xml", ".ico", ".svg", ".png", ".jpg", ".webp"}
+# Alte Dateien, die auf dem Server nicht mehr liegen sollen
+REMOVE = ["cleanup.php", "familie/kalender.php"]
+
+def want(rel):
+    parts = rel.split("/")
+    if parts[0] == "familie" and len(parts) > 1 and parts[1] in ("data", "uploads"):
+        return parts[-1] == ".htaccess"           # nur der Schutz, keine Nutzerdaten
+    name = parts[-1]
+    if name in EXCLUDE_FILES: return False
+    ext = os.path.splitext(name)[1].lower() if name != ".htaccess" else ".htaccess"
+    return ext in ALLOWED_EXT
+
+def collect():
+    out = []
+    for dp, dns, fns in os.walk(ROOT):
+        dns[:] = [d for d in dns if d not in EXCLUDE_DIRS]
+        for fn in fns:
+            rel = os.path.relpath(os.path.join(dp, fn), ROOT).replace(os.sep, "/")
+            if want(rel): out.append(rel)
+    return sorted(out)
 
 def connect(retries=3):
     for attempt in range(1, retries + 1):
@@ -39,37 +39,43 @@ def connect(retries=3):
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(HOST, port=PORT, username=USER, password=PASS, timeout=20)
-            print(f"✅ Connected (attempt {attempt})")
+            print(f"Verbunden (Versuch {attempt})")
             return client, client.open_sftp()
         except Exception as e:
-            print(f"⚠️  Attempt {attempt}: {e}")
+            print(f"Versuch {attempt} fehlgeschlagen: {e}")
             if attempt < retries: time.sleep(5)
     sys.exit(1)
 
 def ensure_dir(sftp, path):
     try: sftp.stat(path)
-    except FileNotFoundError:
-        sftp.mkdir(path); print(f"📁 {path}")
+    except IOError:
+        sftp.mkdir(path); print(f"Ordner angelegt: {path}")
 
+files = collect()
+print(f"{len(files)} Dateien zu übertragen")
 client, sftp = connect()
 base = REMOTE.rstrip("/")
-
-# Ensure dirs
-for d in ["phpmailer", "includes", "familie", "familie/data"]:
-    ensure_dir(sftp, f"{base}/{d}")
-
 errors = []
-for local_rel, remote_rel in FILES:
-    local  = os.path.join(os.path.dirname(__file__), "..", local_rel)
-    remote = f"{base}/{remote_rel}"
-    if not os.path.exists(local):
-        print(f"⏭️  SKIP {local_rel}"); continue
+
+dirs = sorted({os.path.dirname(f) for f in files if os.path.dirname(f)}, key=lambda d: d.count("/"))
+for d in dirs:
+    parts = d.split("/")
+    for i in range(1, len(parts) + 1):
+        ensure_dir(sftp, base + "/" + "/".join(parts[:i]))
+
+for rel in files:
     try:
-        sftp.put(local, remote)
-        print(f"✅ {local_rel} ({os.path.getsize(local):,}B)")
+        sftp.put(os.path.join(ROOT, rel), f"{base}/{rel}")
+        print(f"ok  {rel}")
     except Exception as e:
-        print(f"❌ {local_rel}: {e}"); errors.append(local_rel)
+        print(f"FEHLER {rel}: {e}"); errors.append(rel)
+
+for rel in REMOVE:
+    try:
+        sftp.remove(f"{base}/{rel}"); print(f"entfernt {rel}")
+    except IOError:
+        pass
 
 sftp.close(); client.close()
-print(f"\n{'✅ Done' if not errors else '❌ Errors: ' + str(errors)}")
+print("Fertig" if not errors else f"Fehler bei: {errors}")
 sys.exit(1 if errors else 0)
