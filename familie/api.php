@@ -187,6 +187,16 @@ case 'post_pin': {
     ok(array('reload' => true));
 }
 
+case 'person_delete': {
+    $p = row('SELECT * FROM persons WHERE id = ?', array(post_int('id')));
+    if (!$p) fail('Person nicht gefunden.', 404);
+    if (!is_owner_or_admin($user, $p['created_by'])) fail('Du darfst nur Personen löschen, die du selbst angelegt hast.', 403);
+    image_delete('persons', $p['photo']);
+    q('DELETE FROM persons WHERE id = ?', array($p['id']));
+    flash('Die Person wurde gelöscht.');
+    ok(array('redirect' => 'stammbaum.php'));
+}
+
 default:
     fail('Unbekannte Aktion.', 404);
 }

@@ -238,7 +238,14 @@
       btn('+ Kind', 'person_edit.php?rel=child&of=' + id);
       btn('+ Partner', 'person_edit.php?rel=partner&of=' + id);
       btn('+ Elternteil', 'person_edit.php?rel=parent&of=' + id);
+      btn('Verknüpfen', 'person_edit.php?id=' + id + '#link');
     }
+    if (p.can_del) {
+      var del = document.createElement('button'); del.className = 'btn btn-danger btn-sm'; del.textContent = 'Löschen';
+      del.onclick = function () { if (confirm(name(p) + ' endgültig aus dem Stammbaum löschen?')) fam.fetch('person_delete', { id: id }).then(function (r) { fam.result(r); }); };
+      act.appendChild(del);
+    }
+    if (p.by) { var by = document.createElement('div'); by.className = 'muted tiny'; by.style.marginTop = '1rem'; by.textContent = 'angelegt von ' + p.by; panel.appendChild(by); }
     panel.appendChild(act);
     panel.classList.add('open');
     if (center) focusOn(id, false);

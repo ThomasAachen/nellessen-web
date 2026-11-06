@@ -25,7 +25,8 @@ foreach (rows('SELECT * FROM persons ORDER BY id') as $p) {
         'gender' => (string)$p['gender'], 'bd' => (string)$p['birth_date'], 'bd_txt' => fmt_partial($p['birth_date']), 'bp' => (string)$p['birth_place'],
         'dd' => (string)$p['death_date'], 'dd_txt' => fmt_partial($p['death_date']), 'dp' => (string)$p['death_place'],
         'bio' => (string)$p['bio'], 'photo' => $p['photo'] ? img_url('persons', $p['photo'], true) : '', 'age' => $age,
-        'user' => $p['user_id'] ? user_name($p['user_id']) : '',
+        'user' => $p['user_id'] ? user_name($p['user_id']) : '', 'can_del' => is_owner_or_admin($user, $p['created_by']),
+        'by' => $p['created_by'] ? user_name($p['created_by']) : '',
     );
 }
 $links = array();

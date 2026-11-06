@@ -5,6 +5,7 @@ $user = require_role('editor');
 $id = get_int('id');
 $p = $id ? row('SELECT * FROM persons WHERE id = ?', array($id)) : null;
 if ($id && !$p) { flash('Diese Person gibt es nicht.', 'err'); redirect('stammbaum.php'); }
+$showDup = 0;
 $rel = get_str('rel'); $of = get_int('of');
 $ofP = ($rel !== '' && $of) ? row('SELECT * FROM persons WHERE id = ?', array($of)) : null;
 if (!in_array($rel, array('child', 'partner', 'parent'), true)) { $rel = ''; $ofP = null; }
@@ -32,10 +33,27 @@ if (is_post()) {
     $back = $id ? 'person_edit.php?id=' . $id : 'stammbaum.php';
 
     if ($id && $do === 'delete') {
+        if (!is_owner_or_admin($user, $p['created_by'])) { flash('Du darfst nur Personen löschen, die du selbst angelegt hast.', 'err'); redirect($back); }
         image_delete('persons', $p['photo']);
         q('DELETE FROM persons WHERE id = ?', array($id));
         flash('Die Person wurde gelöscht.');
         redirect('stammbaum.php');
+    }
+    if ($id && $do === 'link') {
+        $kind = post_str('how'); $oid = post_int('other');
+        if (!$oid || $oid === $id || !val('SELECT COUNT(*) FROM persons WHERE id = ?', array($oid))) { flash('Bitte wähle eine Person.', 'err'); redirect($back . '#link'); }
+        $pk = post_str('pkind') === 'adopted' ? 'adopted' : 'bio';
+        if ($kind === 'child_of') { $par = $oid; $chi = $id; }
+        elseif ($kind === 'parent_of') { $par = $id; $chi = $oid; }
+        elseif ($kind === 'partner_of') {
+            if (val('SELECT COUNT(*) FROM partnerships WHERE (person_a = ? AND person_b = ?) OR (person_a = ? AND person_b = ?)', array($id, $oid, $oid, $id))) flash('Diese Verbindung gibt es schon.', 'err');
+            else { q("INSERT INTO partnerships (person_a, person_b, kind) VALUES (?, ?, 'marriage')", array($id, $oid)); flash('Partner verknüpft. Hochzeitsdatum kannst du unten ergänzen.'); }
+            redirect($back . '#link');
+        } else { flash('Bitte wähle die Art der Verbindung.', 'err'); redirect($back . '#link'); }
+        if (in_array($par, descendants($chi), true) || $par === $chi) flash('Das geht nicht: Die Verbindung würde einen Kreis ergeben.', 'err');
+        elseif ((int)val('SELECT COUNT(*) FROM parent_links WHERE child_id = ?', array($chi)) >= 4) flash('Mehr als vier Elternteile sind nicht möglich.', 'err');
+        else { q('INSERT OR IGNORE INTO parent_links (parent_id, child_id, kind) VALUES (?, ?, ?)', array($par, $chi, $pk)); flash('Verknüpft.'); }
+        redirect($back . '#link');
     }
     if ($id && $do === 'add_parent') {
         $pid = post_int('other');
@@ -93,6 +111,10 @@ if (is_post()) {
         if (!val('SELECT COUNT(*) FROM users WHERE id = ?', array($uid))) $uid = null;
         elseif (val('SELECT COUNT(*) FROM persons WHERE user_id = ? AND id <> ?', array($uid, $id))) { $errors[] = 'Dieses Konto ist schon mit einer anderen Person verknüpft.'; }
     }
+    if (!$errors && !$id && !isset($_POST['confirm_dup'])) {
+        $dup = row('SELECT id FROM persons WHERE lower(first_name) = lower(?) AND lower(last_name) = lower(?) AND COALESCE(birth_date, \'\') = COALESCE(?, \'\')', array($first, $last, $bd));
+        if ($dup) { $errors[] = 'Diese Person gibt es schon im Stammbaum (' . person_label(row('SELECT * FROM persons WHERE id = ?', array($dup['id']))) . '). Bitte verknüpfe die vorhandene Person, statt sie doppelt anzulegen. Wenn es wirklich eine andere Person ist, setze unten den Haken bei „trotzdem neu anlegen“.'; $showDup = $dup['id']; }
+    }
     $photo = $p ? $p['photo'] : null; $old = null;
     if (!$errors && !empty($_FILES['photo']) && $_FILES['photo']['error'] !== UPLOAD_ERR_NO_FILE) {
         try { $res = image_save_upload($_FILES['photo'], 'persons', 900, 240); $old = $photo; $photo = $res['file']; }
@@ -110,7 +132,11 @@ if (is_post()) {
             q('INSERT INTO persons (first_name, last_name, birth_name, gender, birth_date, birth_place, death_date, death_place, bio, photo, user_id, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', array_merge($vals, array($user['id'])));
             $id = last_id();
             if ($ofP) {
-                if ($rel === 'child') q('INSERT OR IGNORE INTO parent_links (parent_id, child_id) VALUES (?, ?)', array($ofP['id'], $id));
+                if ($rel === 'child') {
+                    q('INSERT OR IGNORE INTO parent_links (parent_id, child_id) VALUES (?, ?)', array($ofP['id'], $id));
+                    $sp = post_int('second_parent');
+                    if ($sp && $sp !== (int)$ofP['id'] && val('SELECT COUNT(*) FROM persons WHERE id = ?', array($sp))) q('INSERT OR IGNORE INTO parent_links (parent_id, child_id) VALUES (?, ?)', array($sp, $id));
+                }
                 elseif ($rel === 'parent') q('INSERT OR IGNORE INTO parent_links (parent_id, child_id) VALUES (?, ?)', array($id, $ofP['id']));
                 else q("INSERT INTO partnerships (person_a, person_b, kind) VALUES (?, ?, 'marriage')", array($ofP['id'], $id));
             }
@@ -156,6 +182,16 @@ if ($ofP && !$id) echo '<div class="alert alert-info">Du legst ' . ($rel === 'ch
   <div class="form-group"><label>Foto (optional)</label>
     <?php if ($v('photo')): ?><div style="margin-bottom:.6rem"><img src="<?= h(img_url('persons', $v('photo'), true)) ?>" alt="" style="width:90px;height:90px;object-fit:cover;border-radius:50%;display:block;margin-bottom:.4rem"><label class="check"><input type="checkbox" name="remove_photo" value="1"> Foto entfernen</label></div><?php endif ?>
     <input type="file" name="photo" accept="image/jpeg,image/png,image/gif,image/webp"></div>
+  <?php if ($ofP && !$id && $rel === 'child'):
+    $mates = rows('SELECT p.id, p.first_name, p.last_name, p.birth_date FROM partnerships s JOIN persons p ON p.id = CASE WHEN s.person_a = ? THEN s.person_b ELSE s.person_a END WHERE s.person_a = ? OR s.person_b = ?', array($ofP['id'], $ofP['id'], $ofP['id']));
+    $selSp = isset($_POST['second_parent']) ? post_int('second_parent') : (count($mates) === 1 ? (int)$mates[0]['id'] : 0); ?>
+  <div class="form-group"><label>Anderer Elternteil</label><select name="second_parent"><option value="0">keiner / unbekannt</option>
+    <?php foreach ($mates as $x): ?><option value="<?= (int)$x['id'] ?>"<?= $selSp === (int)$x['id'] ? ' selected' : '' ?>><?= h(person_label($x)) ?> (Partner)</option><?php endforeach ?>
+    <?php foreach ($allPersons as $x): if ($x['id'] == $ofP['id'] || in_array($x['id'], array_column($mates, 'id'))) continue; ?><option value="<?= (int)$x['id'] ?>"<?= $selSp === (int)$x['id'] ? ' selected' : '' ?>><?= h($label($x)) ?></option><?php endforeach ?></select>
+    <div class="hint">So erscheint das Kind nur einmal und hängt an beiden Eltern.</div></div>
+  <?php endif ?>
+  <?php if (!$id && $showDup): ?><div class="form-group"><label class="check" style="text-transform:none;letter-spacing:0"><input type="checkbox" name="confirm_dup" value="1"> trotzdem neu anlegen</label> <a class="link-btn" href="person_edit.php?id=<?= (int)$showDup ?>#link">vorhandene Person öffnen</a></div><?php endif ?>
+  <?php if (!$id && $ofP): ?><p class="muted small">Gibt es die Person schon im Stammbaum? Dann nicht neu anlegen, sondern <a href="person_edit.php?id=<?= (int)$ofP['id'] ?>#link">bei <?= h(person_label($ofP)) ?> verknüpfen</a>.</p><?php endif ?>
   <div class="row"><button class="btn btn-lime">Speichern</button><a class="btn btn-outline" href="stammbaum.php<?= $id ? '?p=' . $id : '' ?>">Zurück zum Stammbaum</a></div>
 </form>
 
@@ -168,6 +204,21 @@ if ($ofP && !$id) echo '<div class="alert alert-info">Du legst ' . ($rel === 'ch
   $childIds = array_map(function ($x) { return (int)$x['id']; }, $children);
   $partnerIds = array_map(function ($s) use ($id) { return (int)($s['person_a'] == $id ? $s['person_b'] : $s['person_a']); }, $ships);
 ?>
+<div class="panel" id="link">
+  <h2>Mit vorhandener Person verknüpfen</h2>
+  <form method="post"><?= csrf_field() ?><input type="hidden" name="do" value="link">
+    <p style="font-family:var(--ffi);color:rgba(255,255,255,.7);margin-bottom:.8rem"><strong><?= h(person_label($p)) ?></strong> ist …</p>
+    <div class="form-3">
+      <div class="form-group"><label>Beziehung</label><select name="how" required><option value="">wählen …</option><option value="child_of">Kind von</option><option value="parent_of">Vater oder Mutter von</option><option value="partner_of">Partner(in) von</option></select></div>
+      <div class="form-group"><label>Person</label><select name="other" required><option value="">wählen …</option>
+        <?php foreach ($allPersons as $x): if ($x['id'] == $id) continue; ?><option value="<?= (int)$x['id'] ?>"><?= h($label($x)) ?></option><?php endforeach ?></select></div>
+      <div class="form-group"><label>Art (bei Eltern und Kindern)</label><select name="pkind"><option value="bio">leiblich</option><option value="adopted">adoptiert</option></select></div>
+    </div>
+    <button class="btn btn-lime btn-sm">Verknüpfen</button>
+    <p class="hint" style="margin-top:.6rem">Ein Kind mit zwei Eltern verknüpfst du nacheinander mit beiden. Es erscheint im Stammbaum trotzdem nur einmal.</p>
+  </form>
+</div>
+
 <div class="panel">
   <h2>Eltern</h2>
   <?php foreach ($parents as $x): ?><div class="row between" style="padding:.4rem 0;border-top:1px solid rgba(255,255,255,.06)"><span><?= h($label($x)) ?><?= $x['lk'] === 'adopted' ? ' <span class="tag">adoptiert</span>' : '' ?></span>
@@ -217,10 +268,12 @@ if ($ofP && !$id) echo '<div class="alert alert-info">Du legst ' . ($rel === 'ch
     <a class="link-btn" href="person_edit.php?rel=child&of=<?= $id ?>">oder neue Person anlegen</a></form>
 </div>
 
+<?php if (is_owner_or_admin($user, $p['created_by'])): ?>
 <div class="panel">
   <h2>Person löschen</h2>
   <p class="muted small" style="margin-bottom:1rem">Entfernt die Person samt ihren Verbindungen aus dem Stammbaum. Geschichten bleiben erhalten.</p>
   <form method="post" data-confirm="<?= h(person_label($p)) ?> endgültig löschen?"><?= csrf_field() ?><input type="hidden" name="do" value="delete"><button class="btn btn-danger btn-sm">Person löschen</button></form>
 </div>
+<?php endif ?>
 <?php endif;
 fam_end();
