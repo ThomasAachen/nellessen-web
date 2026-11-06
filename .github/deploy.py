@@ -9,6 +9,7 @@ REMOTE = os.environ.get("SFTP_TARGET", "/dsc06424530/")
 
 FILES = [
     # Public
+    ("index.html",                        "index.html"),
     ("index.php",                         "index.php"),
     ("send.php",                          "send.php"),
     ("robots.txt",                        "robots.txt"),
